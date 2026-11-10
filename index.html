@@ -28,6 +28,7 @@
       --green: #77ffac;
       --yellow: #ffd166;
       --orange: #ff9f1c;
+      --purple: #c879ff;
       --red: #ff7373;
       --button: #087da8;
       --button-secondary: #28566a;
@@ -119,6 +120,10 @@
       background: #9c3434;
     }
 
+    /*
+      Interactive map
+    */
+
     .map-toolbar {
       display: grid;
       grid-template-columns: 1fr auto auto auto;
@@ -186,24 +191,24 @@
     }
 
     /*
-      Waypoint buttons are counter-scaled by JavaScript.
+      Known waypoint dots are 50 percent smaller
+      than the previous 22 pixel version.
 
-      Their map positions move apart as the image enlarges,
-      but their visible size remains approximately constant.
+      The pseudo-element preserves a larger touch area.
     */
 
     .waypoint-dot {
       position: absolute;
-      width: 22px;
-      height: 22px;
+      width: 11px;
+      height: 11px;
       min-height: 0;
       padding: 0;
       border: 2px solid #101010;
       border-radius: 50%;
-      background: rgba(255, 216, 0, 0.92);
+      background: rgba(255, 216, 0, 0.95);
       box-shadow:
-        0 0 0 2px rgba(255, 255, 255, 0.42),
-        0 2px 5px rgba(0, 0, 0, 0.8);
+        0 0 0 1px rgba(255, 255, 255, 0.55),
+        0 2px 4px rgba(0, 0, 0, 0.85);
       transform-origin: center;
       pointer-events: auto;
       touch-action: manipulation;
@@ -211,21 +216,42 @@
       z-index: 2;
     }
 
-    .waypoint-dot.route-selected {
-      background: var(--orange);
-      border-color: white;
+    .waypoint-dot::after {
+      content: "";
+      position: absolute;
+      inset: -12px;
+      border-radius: 50%;
+    }
+
+    .waypoint-dot.custom {
+      width: 16px;
+      height: 16px;
+      background: var(--purple);
+      border: 2px solid white;
       z-index: 3;
     }
 
+    .waypoint-dot.route-selected {
+      width: 16px;
+      height: 16px;
+      background: var(--orange);
+      border-color: white;
+      z-index: 4;
+    }
+
+    .waypoint-dot.custom.route-selected {
+      background: var(--purple);
+    }
+
     .waypoint-dot.active {
-      width: 32px;
-      height: 32px;
+      width: 24px;
+      height: 24px;
       background: #00d9ff;
       border: 4px solid white;
       box-shadow:
         0 0 0 4px rgba(0, 217, 255, 0.52),
         0 2px 7px rgba(0, 0, 0, 0.9);
-      z-index: 5;
+      z-index: 6;
     }
 
     .map-status,
@@ -236,6 +262,17 @@
       text-align: center;
       font-size: 14px;
     }
+
+    .custom-warning {
+      margin: 7px 0 0;
+      color: var(--yellow);
+      text-align: center;
+      font-size: 12px;
+    }
+
+    /*
+      Route controls
+    */
 
     .active-waypoint-name {
       margin: 8px 0 2px;
@@ -251,6 +288,10 @@
       text-align: center;
       font-size: 13px;
     }
+
+    /*
+      VMG panels
+    */
 
     .vmg-grid {
       display: grid;
@@ -372,7 +413,7 @@
   <section class="panel">
     <div class="map-toolbar">
       <p class="map-instruction">
-        Zoom and drag the map. Tap a small dot to add that waypoint.
+        Tap a known dot, or press and hold the map to create a custom point.
       </p>
 
       <button
@@ -423,7 +464,11 @@
     </div>
 
     <p id="mapStatus" class="map-status">
-      Tap a small waypoint dot to add it to the route
+      Tap a yellow point, or zoom in and hold the map for 0.7 seconds
+    </p>
+
+    <p class="custom-warning">
+      Purple points selected from the mosaic are approximate.
     </p>
   </section>
 
@@ -579,8 +624,8 @@
 
   <p class="safety-note">
     VMG reference only. Selecting a waypoint does not define a safe route.
-    Check current nautical charts, depths, hazards, tides, traffic, weather,
-    and local restrictions before navigating.
+    Custom map points are approximate. Confirm all coordinates and routes
+    using current nautical charts and navigation information.
   </p>
 
   <script src="waypoints.js"></script>
@@ -591,6 +636,10 @@
 
     const ACTIVE_STORAGE_KEY =
       "cruisingVmgActiveWaypoint";
+
+    const CUSTOM_STORAGE_KEY =
+      "cruisingVmgCustomWaypoints";
+
 
     const mapViewport =
       document.getElementById("mapViewport");
@@ -688,17 +737,75 @@
       waypoint.id =
         waypoint.id ||
         createWaypointId(waypoint.name);
+
+      waypoint.isCustom = false;
     });
+
+
+    let customWaypoints = [];
+
+
+    function loadCustomWaypoints() {
+      try {
+        const saved =
+          JSON.parse(
+            localStorage.getItem(
+              CUSTOM_STORAGE_KEY
+            ) || "[]"
+          );
+
+        customWaypoints =
+          saved.filter(function(point) {
+            return (
+              point &&
+              point.id &&
+              Number.isFinite(point.latitude) &&
+              Number.isFinite(point.longitude) &&
+              Number.isFinite(point.x_percent) &&
+              Number.isFinite(point.y_percent)
+            );
+          });
+
+        customWaypoints.forEach(
+          function(point) {
+            point.isCustom = true;
+          }
+        );
+      } catch (error) {
+        customWaypoints = [];
+      }
+    }
+
+
+    function saveCustomWaypoints() {
+      localStorage.setItem(
+        CUSTOM_STORAGE_KEY,
+        JSON.stringify(customWaypoints)
+      );
+    }
+
+
+    loadCustomWaypoints();
 
 
     const waypointById = new Map();
 
-    waypoints.forEach(function(waypoint) {
-      waypointById.set(
-        waypoint.id,
-        waypoint
-      );
-    });
+
+    function rebuildWaypointMap() {
+      waypointById.clear();
+
+      waypoints
+        .concat(customWaypoints)
+        .forEach(function(waypoint) {
+          waypointById.set(
+            waypoint.id,
+            waypoint
+          );
+        });
+    }
+
+
+    rebuildWaypointMap();
 
 
     let selectedRoute = [];
@@ -772,6 +879,21 @@
     let previousPinchDistance = null;
     let previousPinchCentre = null;
 
+    const longPressMilliseconds = 700;
+    const longPressMovementLimit = 12;
+
+    let longPressTimer = null;
+    let longPressStart = null;
+    let longPressPointerId = null;
+    let longPressTriggered = false;
+
+
+    function allWaypoints() {
+      return waypoints.concat(
+        customWaypoints
+      );
+    }
+
 
     function updateWaypointDotScale() {
       const inverseScale =
@@ -789,85 +911,98 @@
     }
 
 
+    function attachDotEvents(
+      dot,
+      waypoint
+    ) {
+      dot.addEventListener(
+        "pointerdown",
+        function(event) {
+          event.stopPropagation();
+        }
+      );
+
+      dot.addEventListener(
+        "pointermove",
+        function(event) {
+          event.stopPropagation();
+        }
+      );
+
+      dot.addEventListener(
+        "pointerup",
+        function(event) {
+          event.stopPropagation();
+        }
+      );
+
+      dot.addEventListener(
+        "pointercancel",
+        function(event) {
+          event.stopPropagation();
+        }
+      );
+
+      dot.addEventListener(
+        "click",
+        function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+
+          addWaypointToRoute(
+            waypoint.id
+          );
+        }
+      );
+    }
+
+
     function buildWaypointDots() {
       waypointLayer.innerHTML = "";
       dotByWaypointId.clear();
 
-      waypoints.forEach(function(waypoint) {
-        const dot =
-          document.createElement("button");
+      allWaypoints().forEach(
+        function(waypoint) {
+          const dot =
+            document.createElement("button");
 
-        dot.type = "button";
-        dot.className = "waypoint-dot";
+          dot.type = "button";
+          dot.className =
+            "waypoint-dot";
 
-        dot.style.left =
-          waypoint.x_percent + "%";
-
-        dot.style.top =
-          waypoint.y_percent + "%";
-
-        dot.title = waypoint.name;
-
-        dot.setAttribute(
-          "aria-label",
-          "Add " + waypoint.name
-        );
-
-        dot.dataset.waypointId =
-          waypoint.id;
-
-        /*
-          These pointer handlers stop the surrounding
-          map from capturing a waypoint click.
-        */
-
-        dot.addEventListener(
-          "pointerdown",
-          function(event) {
-            event.stopPropagation();
+          if (waypoint.isCustom) {
+            dot.classList.add("custom");
           }
-        );
 
-        dot.addEventListener(
-          "pointermove",
-          function(event) {
-            event.stopPropagation();
-          }
-        );
+          dot.style.left =
+            waypoint.x_percent + "%";
 
-        dot.addEventListener(
-          "pointerup",
-          function(event) {
-            event.stopPropagation();
-          }
-        );
+          dot.style.top =
+            waypoint.y_percent + "%";
 
-        dot.addEventListener(
-          "pointercancel",
-          function(event) {
-            event.stopPropagation();
-          }
-        );
+          dot.title =
+            waypoint.name;
 
-        dot.addEventListener(
-          "click",
-          function(event) {
-            event.preventDefault();
-            event.stopPropagation();
+          dot.setAttribute(
+            "aria-label",
+            "Add " + waypoint.name
+          );
 
-            addWaypointToRoute(
-              waypoint.id
-            );
-          }
-        );
+          attachDotEvents(
+            dot,
+            waypoint
+          );
 
-        waypointLayer.appendChild(dot);
+          waypointLayer.appendChild(
+            dot
+          );
 
-        dotByWaypointId.set(
-          waypoint.id,
-          dot
-        );
-      });
+          dotByWaypointId.set(
+            waypoint.id,
+            dot
+          );
+        }
+      );
 
       updateWaypointDotStyles();
       updateWaypointDotScale();
@@ -941,6 +1076,285 @@
     }
 
 
+    /*
+      Convert a viewport position into a percentage
+      position on the unscaled mosaic.
+    */
+
+    function viewportPointToMapPercent(
+      clientX,
+      clientY
+    ) {
+      const rectangle =
+        mapViewport
+          .getBoundingClientRect();
+
+      const viewportX =
+        clientX -
+        rectangle.left;
+
+      const viewportY =
+        clientY -
+        rectangle.top;
+
+      const mapContentX =
+        (viewportX - mapX) /
+        mapScale;
+
+      const mapContentY =
+        (viewportY - mapY) /
+        mapScale;
+
+      return {
+        xPercent:
+          (
+            mapContentX /
+            mapContent.offsetWidth
+          ) * 100,
+
+        yPercent:
+          (
+            mapContentY /
+            mapContent.offsetHeight
+          ) * 100
+      };
+    }
+
+
+    /*
+      Estimate latitude and longitude using six nearby
+      KML control points and inverse-distance weighting.
+
+      This creates an approximate VMG reference point.
+    */
+
+    function estimateCoordinate(
+      xPercent,
+      yPercent
+    ) {
+      const controlPoints =
+        waypoints
+          .map(function(point) {
+            const dx =
+              point.x_percent -
+              xPercent;
+
+            const dy =
+              point.y_percent -
+              yPercent;
+
+            return {
+              point: point,
+              distance:
+                Math.hypot(dx, dy)
+            };
+          })
+          .sort(function(a, b) {
+            return (
+              a.distance -
+              b.distance
+            );
+          })
+          .slice(0, 6);
+
+      if (
+        controlPoints.length < 3
+      ) {
+        return null;
+      }
+
+      if (
+        controlPoints[0]
+          .distance < 0.0001
+      ) {
+        return {
+          latitude:
+            controlPoints[0]
+              .point.latitude,
+
+          longitude:
+            controlPoints[0]
+              .point.longitude
+        };
+      }
+
+      let totalWeight = 0;
+      let latitude = 0;
+      let longitude = 0;
+
+      controlPoints.forEach(
+        function(item) {
+          const weight =
+            1 /
+            Math.pow(
+              Math.max(
+                item.distance,
+                0.01
+              ),
+              2
+            );
+
+          latitude +=
+            item.point.latitude *
+            weight;
+
+          longitude +=
+            item.point.longitude *
+            weight;
+
+          totalWeight +=
+            weight;
+        }
+      );
+
+      return {
+        latitude:
+          latitude /
+          totalWeight,
+
+        longitude:
+          longitude /
+          totalWeight
+      };
+    }
+
+
+    function addCustomWaypointAt(
+      clientX,
+      clientY
+    ) {
+      if (mapScale < 1.5) {
+        mapStatus.textContent =
+          "Zoom in to at least 1.5× before adding a custom point";
+
+        return;
+      }
+
+      const position =
+        viewportPointToMapPercent(
+          clientX,
+          clientY
+        );
+
+      if (
+        position.xPercent < 0 ||
+        position.xPercent > 100 ||
+        position.yPercent < 0 ||
+        position.yPercent > 100
+      ) {
+        return;
+      }
+
+      const coordinate =
+        estimateCoordinate(
+          position.xPercent,
+          position.yPercent
+        );
+
+      if (!coordinate) {
+        mapStatus.textContent =
+          "Unable to estimate coordinates at this point";
+
+        return;
+      }
+
+      const defaultName =
+        "Custom waypoint " +
+        (
+          customWaypoints.length +
+          1
+        );
+
+      const suppliedName =
+        window.prompt(
+          "Name this approximate waypoint:",
+          defaultName
+        );
+
+      if (suppliedName === null) {
+        mapStatus.textContent =
+          "Custom waypoint cancelled";
+
+        return;
+      }
+
+      const cleanName =
+        suppliedName.trim();
+
+      if (!cleanName) {
+        mapStatus.textContent =
+          "A waypoint name is required";
+
+        return;
+      }
+
+      const waypoint = {
+        id:
+          "custom-" +
+          Date.now(),
+
+        name:
+          cleanName,
+
+        latitude:
+          Number(
+            coordinate.latitude
+              .toFixed(7)
+          ),
+
+        longitude:
+          Number(
+            coordinate.longitude
+              .toFixed(7)
+          ),
+
+        x_percent:
+          Number(
+            position.xPercent
+              .toFixed(5)
+          ),
+
+        y_percent:
+          Number(
+            position.yPercent
+              .toFixed(5)
+          ),
+
+        isCustom:
+          true
+      };
+
+      customWaypoints.push(
+        waypoint
+      );
+
+      saveCustomWaypoints();
+      rebuildWaypointMap();
+      buildWaypointDots();
+
+      addWaypointToRoute(
+        waypoint.id
+      );
+
+      mapStatus.textContent =
+        "Added approximate point: " +
+        waypoint.name;
+    }
+
+
+    function clearLongPress() {
+      if (longPressTimer) {
+        clearTimeout(
+          longPressTimer
+        );
+      }
+
+      longPressTimer = null;
+      longPressStart = null;
+      longPressPointerId = null;
+    }
+
+
     function updateRouteInterface() {
       routeSelect.innerHTML = "";
 
@@ -953,7 +1367,6 @@
           );
 
         option.value = "";
-
         option.textContent =
           "Tap the map to add waypoints";
 
@@ -1005,7 +1418,12 @@
           option.textContent =
             (index + 1) +
             ". " +
-            waypoint.name;
+            waypoint.name +
+            (
+              waypoint.isCustom
+                ? " (custom)"
+                : ""
+            );
 
           routeSelect.appendChild(
             option
@@ -1151,14 +1569,19 @@
           activeWaypointId
         );
 
-      const confirmed =
-        window.confirm(
-          "Remove \"" +
-          waypoint.name +
-          "\" from this route?"
-        );
+      const removePermanently =
+        waypoint.isCustom;
 
-      if (!confirmed) {
+      const question =
+        removePermanently
+          ? "Delete custom waypoint \"" +
+            waypoint.name +
+            "\" from this phone?"
+          : "Remove \"" +
+            waypoint.name +
+            "\" from this route?";
+
+      if (!window.confirm(question)) {
         return;
       }
 
@@ -1175,24 +1598,35 @@
           }
         );
 
+      if (removePermanently) {
+        customWaypoints =
+          customWaypoints.filter(
+            function(point) {
+              return point.id !==
+                activeWaypointId;
+            }
+          );
+
+        saveCustomWaypoints();
+        rebuildWaypointMap();
+      }
+
       if (
         selectedRoute.length === 0
       ) {
         activeWaypointId = null;
       } else {
-        const replacementIndex =
-          Math.min(
-            oldIndex,
-            selectedRoute.length - 1
-          );
-
         activeWaypointId =
           selectedRoute[
-            replacementIndex
+            Math.min(
+              oldIndex,
+              selectedRoute.length - 1
+            )
           ];
       }
 
       saveRoute();
+      buildWaypointDots();
       updateRouteInterface();
       resetNavigationForNewWaypoint();
 
@@ -1208,14 +1642,13 @@
         return;
       }
 
-      const confirmed =
-        window.confirm(
+      if (
+        !window.confirm(
           "Clear all " +
           selectedRoute.length +
           " selected waypoints?"
-        );
-
-      if (!confirmed) {
+        )
+      ) {
         return;
       }
 
@@ -1226,7 +1659,7 @@
       updateRouteInterface();
 
       mapStatus.textContent =
-        "Route cleared. Tap the map to begin again.";
+        "Route cleared. Saved purple points remain on this phone.";
 
       routeMessage.textContent = "";
     }
@@ -1305,9 +1738,7 @@
           )
         );
 
-      if (
-        newScale === mapScale
-      ) {
+      if (newScale === mapScale) {
         return;
       }
 
@@ -1348,12 +1779,6 @@
     function centreMapOnWaypoint(
       waypoint
     ) {
-      const viewportWidth =
-        mapViewport.clientWidth;
-
-      const viewportHeight =
-        mapViewport.clientHeight;
-
       if (mapScale < 2) {
         mapScale = 2;
       }
@@ -1373,12 +1798,14 @@
         );
 
       mapX =
-        viewportWidth / 2 -
+        mapViewport.clientWidth /
+        2 -
         waypointX *
         mapScale;
 
       mapY =
-        viewportHeight / 2 -
+        mapViewport.clientHeight /
+        2 -
         waypointY *
         mapScale;
 
@@ -1437,6 +1864,38 @@
         );
 
         if (
+          activePointers.size === 1
+        ) {
+          longPressTriggered = false;
+
+          longPressPointerId =
+            event.pointerId;
+
+          longPressStart = {
+            x: event.clientX,
+            y: event.clientY
+          };
+
+          longPressTimer =
+            setTimeout(
+              function() {
+                longPressTriggered =
+                  true;
+
+                addCustomWaypointAt(
+                  longPressStart.x,
+                  longPressStart.y
+                );
+
+                clearLongPress();
+              },
+              longPressMilliseconds
+            );
+        } else {
+          clearLongPress();
+        }
+
+        if (
           activePointers.size === 2
         ) {
           const values =
@@ -1483,6 +1942,28 @@
         );
 
         if (
+          longPressStart &&
+          event.pointerId ===
+            longPressPointerId
+        ) {
+          const movement =
+            Math.hypot(
+              current.x -
+              longPressStart.x,
+
+              current.y -
+              longPressStart.y
+            );
+
+          if (
+            movement >
+            longPressMovementLimit
+          ) {
+            clearLongPress();
+          }
+        }
+
+        if (
           activePointers.size === 1
         ) {
           mapX +=
@@ -1499,6 +1980,8 @@
         if (
           activePointers.size === 2
         ) {
+          clearLongPress();
+
           const values =
             Array.from(
               activePointers.values()
@@ -1528,17 +2011,16 @@
               newCentre.y -
               previousPinchCentre.y;
 
-            const scaleRatio =
-              newDistance /
-              previousPinchDistance;
-
             const rectangle =
               mapViewport
                 .getBoundingClientRect();
 
             zoomMap(
               mapScale *
-                scaleRatio,
+              (
+                newDistance /
+                previousPinchDistance
+              ),
 
               newCentre.x -
                 rectangle.left,
@@ -1559,6 +2041,13 @@
 
 
     function finishPointer(event) {
+      if (
+        event.pointerId ===
+        longPressPointerId
+      ) {
+        clearLongPress();
+      }
+
       activePointers.delete(
         event.pointerId
       );
@@ -1600,24 +2089,19 @@
           mapViewport
             .getBoundingClientRect();
 
-        const centreX =
-          event.clientX -
-          rectangle.left;
-
-        const centreY =
-          event.clientY -
-          rectangle.top;
-
-        const zoomFactor =
-          event.deltaY < 0
-            ? 1.2
-            : 1 / 1.2;
-
         zoomMap(
           mapScale *
-            zoomFactor,
-          centreX,
-          centreY
+          (
+            event.deltaY < 0
+              ? 1.2
+              : 1 / 1.2
+          ),
+
+          event.clientX -
+            rectangle.left,
+
+          event.clientY -
+            rectangle.top
         );
       },
       {
@@ -1662,6 +2146,10 @@
     );
 
 
+    /*
+      GPS and VMG
+    */
+
     let gpsWatchId = null;
     let lastGpsPosition = null;
     let distanceHistory = [];
@@ -1698,13 +2186,10 @@
           ? "Collecting a new 15 second sample"
           : "No VMG samples";
 
-      if (!activeWaypointId) {
-        vmgMessage.textContent =
-          "Select an active waypoint";
-      } else if (!lastGpsPosition) {
-        vmgMessage.textContent =
-          "Start GPS to calculate VMG";
-      }
+      vmgMessage.textContent =
+        activeWaypointId
+          ? "Start GPS to calculate VMG"
+          : "Select an active waypoint";
     }
 
 
@@ -1757,8 +2242,7 @@
 
       const a =
         Math.sin(
-          latitudeDifference /
-          2
+          latitudeDifference / 2
         ) ** 2 +
         Math.cos(
           latitude1Radians
@@ -1767,8 +2251,7 @@
           latitude2Radians
         ) *
         Math.sin(
-          longitudeDifference /
-          2
+          longitudeDifference / 2
         ) ** 2;
 
       const angularDistance =
@@ -1830,13 +2313,10 @@
           longitudeDifference
         );
 
-      const bearing =
+      return (
         radiansToDegrees(
           Math.atan2(y, x)
-        );
-
-      return (
-        bearing +
+        ) +
         360
       ) % 360;
     }
@@ -1968,70 +2448,60 @@
       distance
     ) {
       distanceHistory.push({
-        timestamp:
-          timestamp,
-
-        distance:
-          distance
+        timestamp: timestamp,
+        distance: distance
       });
 
-      const oldestAllowedTime =
+      const oldestAllowed =
         timestamp -
-        (
-          rollingWindowSeconds *
-          1000
-        );
+        rollingWindowSeconds *
+        1000;
 
       while (
         distanceHistory.length > 2 &&
         distanceHistory[1].timestamp <
-          oldestAllowedTime
+          oldestAllowed
       ) {
         distanceHistory.shift();
       }
 
-      const oldestSample =
+      const oldest =
         distanceHistory[0];
 
-      const newestSample =
+      const newest =
         distanceHistory[
-          distanceHistory.length -
-          1
+          distanceHistory.length - 1
         ];
 
       const elapsedSeconds =
         (
-          newestSample.timestamp -
-          oldestSample.timestamp
+          newest.timestamp -
+          oldest.timestamp
         ) / 1000;
 
       if (elapsedSeconds < 12) {
-        const remaining =
+        rollingVmgDisplay.textContent =
+          "--";
+
+        sampleStatus.textContent =
+          "15 second VMG ready in about " +
           Math.max(
             1,
             Math.ceil(
               rollingWindowSeconds -
               elapsedSeconds
             )
-          );
-
-        rollingVmgDisplay.textContent =
-          "--";
-
-        sampleStatus.textContent =
-          "15 second VMG ready in about " +
-          remaining +
+          ) +
           " seconds";
 
         return;
       }
 
-      const changeInDistance =
-        oldestSample.distance -
-        newestSample.distance;
-
       const rollingVmg =
-        changeInDistance /
+        (
+          oldest.distance -
+          newest.distance
+        ) /
         (
           elapsedSeconds /
           3600
@@ -2057,9 +2527,6 @@
       suppliedMovement
     ) {
       if (!activeWaypointId) {
-        vmgMessage.textContent =
-          "Select an active waypoint";
-
         return;
       }
 
@@ -2188,9 +2655,6 @@
 
     function startGps() {
       if (!activeWaypointId) {
-        vmgMessage.textContent =
-          "Add and select a waypoint first";
-
         gpsStatus.textContent =
           "No waypoint";
 
@@ -2200,29 +2664,19 @@
         return;
       }
 
-      if (
-        !navigator.geolocation
-      ) {
+      if (!navigator.geolocation) {
         gpsStatus.textContent =
           "Not supported";
-
-        gpsStatus.className =
-          "data-value warning";
 
         return;
       }
 
-      if (
-        gpsWatchId !== null
-      ) {
+      if (gpsWatchId !== null) {
         return;
       }
 
       gpsStatus.textContent =
         "Starting...";
-
-      gpsStatus.className =
-        "data-value";
 
       startButton.disabled = true;
       stopButton.disabled = false;
@@ -2290,41 +2744,27 @@
 
 
     function handleGpsError(error) {
-      let message =
-        "GPS error";
-
-      if (error.code === 1) {
-        message =
-          "Permission denied";
-      }
-
-      if (error.code === 2) {
-        message =
-          "Unavailable";
-      }
-
-      if (error.code === 3) {
-        message =
-          "Timed out";
-      }
+      const messages = {
+        1: "Permission denied",
+        2: "Unavailable",
+        3: "Timed out"
+      };
 
       gpsStatus.textContent =
-        message;
+        messages[error.code] ||
+        "GPS error";
 
       gpsStatus.className =
         "data-value warning";
 
       startButton.disabled = false;
       stopButton.disabled = true;
-
       gpsWatchId = null;
     }
 
 
     function stopGps() {
-      if (
-        gpsWatchId !== null
-      ) {
+      if (gpsWatchId !== null) {
         navigator.geolocation
           .clearWatch(
             gpsWatchId
@@ -2401,9 +2841,7 @@
     updateRouteInterface();
     resetMapView();
 
-    if (
-      selectedRoute.length > 0
-    ) {
+    if (selectedRoute.length > 0) {
       routeMessage.textContent =
         "Restored saved route";
     }
